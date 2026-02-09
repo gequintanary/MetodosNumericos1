@@ -33,6 +33,20 @@ jobs:
           cp README.md content
           jupyter lite build --contents content --output-dir dist
           
+      # 👇👇👇 AGREGAR ESTAS LÍNEAS NUEVAS 👇👇👇
+      - name: Copy static HTML files to dist
+        run: |
+          # Copiar archivos HTML de content/ a dist/
+          if [ -d "content/ejercicios" ]; then
+            mkdir -p dist/ejercicios
+            cp content/ejercicios/*.html dist/ejercicios/ 2>/dev/null || true
+          fi
+          # Copiar cualquier HTML suelto en content/
+          cp content/*.html dist/ 2>/dev/null || true
+          echo "Archivos HTML copiados:"
+          find dist -name "*.html" -type f
+      # 👆👆👆 HASTA AQUÍ 👆👆👆
+          
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
