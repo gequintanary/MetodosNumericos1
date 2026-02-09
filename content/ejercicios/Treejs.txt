@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Face Filters Final</title>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+<style>
+body{margin:0;overflow:hidden;background:black}
+video{position:fixed;width:100vw;height:100vh;object-fit:cover;z-index:-1}
+canvas{position:fixed}
+#ui{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:10;
+  background:rgba(0,0,0,.7);
+  padding:10px;
+  border-radius:10px
+}
+button{
+  width:220px;
+  margin:5px 0;
+  padding:6px
+}
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+  <button onclick="toggle('glasses')">👓 Lentes</button>
+  <button onclick="toggle('mustache')">🥸 Bigote</button>
+  <button onclick="toggle('hat')">🎩 Sombrero</button>
+  <button onclick="toggle('mole')">🟤 Lunar</button>
+  <button onclick="toggle('points')">🟢 FaceMesh</button>
+</div>
+
+<video id="video" autoplay muted playsinline></video>
+
+<script>
+/* ================= FLAGS ================= */
+const filters={
+  glasses:false,
+  mustache:false,
+  hat:false,
+  mole:false,
+  points:false
+};
+const toggle=f=>filters[f]=!filters[f];
+
+/* ================= THREE ================= */
+const scene=new THREE.Scene();
+const camera3D=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
+camera3D.position.z=2;
+
+const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xffffff,1));
+
+/* ================= LENTES ================= */
+const glasses=new THREE.Group();
+const glassMat=new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.25});
+const frameMat=new THREE.MeshBasicMaterial({color:0x000000});
+
+function roundedRect(w,h,r){
+  const s=new THREE.Shape();
+  s.moveTo(-w/2+r,-h/2);
+  s.lineTo(w/2-r,-h/2);
+  s.quadraticCurveTo(w/2,-h/2,w/2,-h/2+r);
+  s.lineTo(w/2,h/2-r);
+  s.quadraticCurveTo(w/2,h/2,w/2-r,h/2);
+  s.lineTo(-w/2+r,h/2);
+  s.quadraticCurveTo(-w/2,h/2,-w/2,h/2-r);
+  s.lineTo(-w/2,-h/2+r);
+  s.quadraticCurveTo(-w/2,-h/2,-w/2+r,-h/2);
+  return s;
+}
+
+const lensGeo=new THREE.ShapeGeometry(roundedRect(0.32,0.2,0.05));
+const lensL=new THREE.Mesh(lensGeo,glassMat);
+const lensR=new THREE.Mesh(lensGeo,glassMat);
+const frameL=new THREE.Mesh(lensGeo,frameMat);
+const frameR=new THREE.Mesh(lensGeo,frameMat);
+
+lensL.position.x=-0.36;
+lensR.position.x=0.36;
+frameL.position.copy(lensL.position);
+frameR.position.copy(lensR.position);
+
+const bridge=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.02,0.01),frameMat);
+glasses.add(lensL,lensR,frameL,frameR,bridge);
+glasses.visible=false;
+scene.add(glasses);
+
+/* ================= BIGOTE ================= */
+const mustacheShape=new THREE.Shape();
+mustacheShape.moveTo(-0.35,0);
+mustacheShape.quadraticCurveTo(-0.15,0.12,0,0.05);
+mustacheShape.quadraticCurveTo(0.15,0.12,0.35,0);
+mustacheShape.quadraticCurveTo(0.15,-0.08,0,-0.02);
+mustacheShape.quadraticCurveTo(-0.15,-0.08,-0.35,0);
+
+const mustache=new THREE.Mesh(
+  new THREE.ShapeGeometry(mustacheShape),
+  new THREE.MeshBasicMaterial({color:0x2a1a12,side:THREE.DoubleSide})
+);
+mustache.visible=false;
+scene.add(mustache);
+
+/* ================= LUNAR ================= */
+const mole=new THREE.Mesh(
+  new THREE.CircleGeometry(0.03,16),
+  new THREE.MeshBasicMaterial({color:0x3b2b1f})
+);
+mole.visible=false;
+scene.add(mole);
+
+/* ================= SOMBRERO MEXICANO GRANDE ================= */
+const hat=new THREE.Group();
+
+const brim=new THREE.Mesh(
+  new THREE.CylinderGeometry(1.4,1.4,0.1,48),
+  new THREE.MeshStandardMaterial({color:0x5a3b1e})
+);
+
+const crown=new THREE.Mesh(
+  new THREE.CylinderGeometry(0.7,0.85,0.9,48),
+  new THREE.MeshStandardMaterial({color:0x6b4a2b})
+);
+
+crown.position.y=0.45;
+hat.add(brim,crown);
+hat.visible=false;
+scene.add(hat);
+
+/* ================= PUNTOS ================= */
+const pointsGeo=new THREE.BufferGeometry();
+const pointsMat=new THREE.PointsMaterial({color:0x00ff00,size:0.02});
+const facePoints=new THREE.Points(pointsGeo,pointsMat);
+facePoints.visible=false;
+scene.add(facePoints);
+
+/* ================= FACEMESH ================= */
+const faceMesh=new FaceMesh({
+  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+});
+faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true});
+
+faceMesh.onResults(res=>{
+  if(!res.multiFaceLandmarks) return;
+
+  const f=res.multiFaceLandmarks[0];
+  const le=f[33], re=f[263], lip=f[13], cheek=f[50];
+
+  const centerX=((le.x+re.x)/2-.5)*3;
+  const centerY=(.5-((le.y+re.y)/2))*2;
+  const eyeDist=Math.abs(le.x-re.x)*3;
+
+  glasses.visible=filters.glasses;
+  if(filters.glasses){
+    glasses.position.set(centerX,centerY,-0.35);
+    glasses.scale.set(eyeDist,eyeDist,1);
+  }
+
+  mustache.visible=filters.mustache;
+  if(filters.mustache){
+    mustache.position.set(
+      (lip.x-.5)*3,
+      (.5-lip.y)*2 + 0.12,
+      -0.35
+    );
+    mustache.scale.set(eyeDist*0.9,eyeDist*0.6,1);
+  }
+
+  mole.visible=filters.mole;
+  if(filters.mole){
+    mole.position.set(
+      (cheek.x-.5)*3 + 0.05,
+      (.5-cheek.y)*2 - 0.05,
+      -0.34
+    );
+  }
+
+  hat.visible=filters.hat;
+  if(filters.hat){
+    hat.position.set(
+      centerX,
+      centerY + eyeDist*0.35, // 🔥 cubre la frente
+      -0.6
+    );
+    hat.scale.set(
+      eyeDist*1.45,
+      eyeDist*1.45,
+      eyeDist*1.45
+    );
+  }
+
+  facePoints.visible=filters.points;
+  if(filters.points){
+    const v=[];
+    f.forEach(p=>v.push((p.x-.5)*3,(.5-p.y)*2,-0.3));
+    pointsGeo.setAttribute("position",new THREE.Float32BufferAttribute(v,3));
+  }
+});
+
+/* ================= CAMARA ================= */
+const video=document.getElementById("video");
+const cam=new Camera(video,{
+  onFrame:async()=>await faceMesh.send({image:video}),
+  width:640,
+  height:480
+});
+
+navigator.mediaDevices.getUserMedia({video:true})
+.then(s=>{
+  video.srcObject=s;
+  cam.start();
+});
+
+/* ================= LOOP ================= */
+(function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene,camera3D);
+})();
+
+onresize=()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  camera3D.aspect=innerWidth/innerHeight;
+  camera3D.updateProjectionMatrix();
+};
+</script>
+
+</body>
+</html>
+
