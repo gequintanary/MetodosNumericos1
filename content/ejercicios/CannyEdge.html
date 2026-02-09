@@ -1,0 +1,183 @@
+from IPython.display import HTML
+
+HTML("""
+<style>
+#canvas {
+  border: 2px solid #222;
+  transform: scaleX(-1);
+}
+button {
+  margin: 5px;
+  padding: 6px 10px;
+}
+</style>
+
+<canvas id="canvas"></canvas><br>
+
+<button id="start">Encender cámara</button>
+<button id="edgesBtn">Bordes: OFF</button>
+<button id="hatBtn">Sombrero: OFF</button>
+<button id="glassesBtn">Lentes: OFF</button>
+<button id="moleBtn">Lunar: OFF</button>
+<button id="stop">Apagar cámara</button>
+
+<script src="https://docs.opencv.org/4.8.0/opencv.js"></script>
+
+<script>
+let streaming = false;
+let stream = null;
+
+let edgesOn = false;
+let hatOn = false;
+let glassesOn = false;
+let moleOn = false;
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const video = document.createElement("video");
+video.setAttribute("playsinline","");
+video.muted = true;
+
+let faceClassifier;
+let ready = false;
+
+/* 🔽 CARGAR CLASIFICADOR FACIAL */
+cv.onRuntimeInitialized = async () => {
+  const res = await fetch(
+    "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+  );
+  const data = new Uint8Array(await res.arrayBuffer());
+  cv.FS_createDataFile("/", "face.xml", data, true, false, false);
+
+  faceClassifier = new cv.CascadeClassifier();
+  faceClassifier.load("face.xml");
+
+  ready = true;
+};
+
+/* 🎥 CÁMARA */
+start.onclick = async () => {
+  if (streaming || !ready) return;
+
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode:"user", width:640, height:480 }
+  });
+
+  video.srcObject = stream;
+  video.onloadedmetadata = () => {
+    video.play();
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    streaming = true;
+    requestAnimationFrame(loop);
+  };
+};
+
+stop.onclick = () => {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  streaming = false;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+};
+
+/* 🔘 BOTONES */
+edgesBtn.onclick = () => toggle("edges");
+hatBtn.onclick = () => toggle("hat");
+glassesBtn.onclick = () => toggle("glasses");
+moleBtn.onclick = () => toggle("mole");
+
+function toggle(t){
+  if(t==="edges"){edgesOn=!edgesOn;edgesBtn.innerText=`Bordes: ${edgesOn?"ON":"OFF"}`}
+  if(t==="hat"){hatOn=!hatOn;hatBtn.innerText=`Sombrero: ${hatOn?"ON":"OFF"}`}
+  if(t==="glasses"){glassesOn=!glassesOn;glassesBtn.innerText=`Lentes: ${glassesOn?"ON":"OFF"}`}
+  if(t==="mole"){moleOn=!moleOn;moleBtn.innerText=`Lunar: ${moleOn?"ON":"OFF"}`}
+}
+
+/* 🔄 LOOP */
+function loop(){
+  if(!streaming) return;
+
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  let src = cv.imread(canvas);
+  let gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+  if(edgesOn){
+    let edges = new cv.Mat();
+    cv.Canny(gray, edges, 80, 160);
+    cv.cvtColor(edges, edges, cv.COLOR_GRAY2RGBA);
+    cv.imshow(canvas, edges);
+    edges.delete();
+  }
+
+  let faces = new cv.RectVector();
+  faceClassifier.detectMultiScale(gray, faces, 1.2, 4);
+
+  for(let i=0;i<faces.size();i++){
+    let f = faces.get(i);
+
+    /* 🧢 SOMBRERO GRANDE (CUBRE FRENTE Y CABELLO) */
+    if(hatOn){
+      let brimY = f.y - f.height * 0.15;
+      let crownY = f.y - f.height * 0.65;
+
+      ctx.fillStyle = "#222";
+
+      // Ala
+      ctx.fillRect(
+        f.x - f.width*0.05,
+        brimY,
+        f.width*1.1,
+        f.height*0.18
+      );
+
+      // Copa
+      ctx.fillRect(
+        f.x + f.width*0.15,
+        crownY,
+        f.width*0.7,
+        f.height*0.5
+      );
+    }
+
+    /* 😎 LENTES MÁS ARRIBA Y CENTRADOS */
+    if(glassesOn){
+      let eyeY = f.y + f.height * 0.28;
+      let eyeW = f.width * 0.28;
+      let gap = f.width * 0.06;
+
+      let leftX  = f.x + f.width*0.5 - eyeW - gap/2;
+      let rightX = f.x + f.width*0.5 + gap/2;
+
+      ctx.fillStyle = "rgba(180,220,255,0.45)";
+      ctx.strokeStyle = "#00aaff";
+      ctx.lineWidth = 3;
+
+      ctx.fillRect(leftX, eyeY, eyeW, eyeW*0.6);
+      ctx.fillRect(rightX, eyeY, eyeW, eyeW*0.6);
+      ctx.strokeRect(leftX, eyeY, eyeW, eyeW*0.6);
+      ctx.strokeRect(rightX, eyeY, eyeW, eyeW*0.6);
+    }
+
+    /* 🔴 LUNAR (SIN CAMBIOS) */
+    if(moleOn){
+      ctx.fillStyle="#3b1f1f";
+      ctx.beginPath();
+      ctx.arc(
+        f.x + f.width*0.65,
+        f.y + f.height*0.65,
+        4, 0, Math.PI*2
+      );
+      ctx.fill();
+    }
+  }
+
+  src.delete();
+  gray.delete();
+  faces.delete();
+
+  requestAnimationFrame(loop);
+}
+</script>
+""")

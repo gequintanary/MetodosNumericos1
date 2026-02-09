@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>FaceMesh Video (SOLIDO)</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+body{margin:0;overflow:hidden;background:black;}
+video,canvas{position:absolute;width:100vw;height:100vh;}
+#ui{
+  position:fixed;top:10px;left:10px;z-index:10;
+  background:rgba(0,0,0,.7);padding:10px;border-radius:10px;
+}
+button{width:220px;margin:5px 0;padding:6px;}
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+  <button onclick="toggle('glasses')">👓 Lentes</button>
+  <button onclick="toggle('mustache')">🥸 Bigote</button>
+  <button onclick="toggle('hat')">🎩 Sombrero</button>
+  <button onclick="toggle('mole')">🟤 Lunar</button>
+  <button onclick="toggle('points')">🟢 FaceMesh</button>
+  <button onclick="toggle('sobel')">🧠 Sobel</button>
+</div>
+
+<video id="video" autoplay muted playsinline></video>
+<canvas id="canvas"></canvas>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+function resize(){
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+resize();
+onresize = resize;
+
+const filters = {
+  glasses:false,
+  mustache:false,
+  hat:false,
+  mole:false,
+  points:false,
+  sobel:false
+};
+
+/* ========= FACEMESH ========= */
+const faceMesh = new FaceMesh({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+});
+
+faceMesh.setOptions({
+  maxNumFaces:1,
+  refineLandmarks:true,
+  staticImageMode:false
+});
+
+faceMesh.onResults(drawResults);
+
+/* ========= DRAW ========= */
+function drawResults(res){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(res.image,0,0,canvas.width,canvas.height);
+
+  if(res.multiFaceLandmarks){
+    const f = res.multiFaceLandmarks[0];
+
+    if(filters.points){
+      ctx.fillStyle="lime";
+      f.forEach(p=>{
+        ctx.beginPath();
+        ctx.arc(p.x*canvas.width,p.y*canvas.height,2,0,Math.PI*2);
+        ctx.fill();
+      });
+    }
+
+    drawFilters(f);
+  }
+
+  if(filters.sobel) applySobel();
+}
+
+function toggle(f){
+  filters[f] = !filters[f];
+}
+
+/* ========= FILTROS ========= */
+function drawFilters(f){
+  const le=f[33], re=f[263], lip=f[13], cheek=f[50];
+  const cx=(le.x+re.x)/2*canvas.width;
+  const cy=(le.y+re.y)/2*canvas.height;
+  const d=Math.abs(le.x-re.x)*canvas.width;
+
+  if(filters.glasses){
+    ctx.strokeStyle="black"; ctx.lineWidth=4;
+    ctx.strokeRect(cx-d*0.7,cy-d*0.25,d*0.6,d*0.35);
+    ctx.strokeRect(cx+d*0.1,cy-d*0.25,d*0.6,d*0.35);
+    ctx.beginPath();
+    ctx.moveTo(cx-d*0.1,cy); ctx.lineTo(cx+d*0.1,cy);
+    ctx.stroke();
+  }
+
+  if(filters.mustache){
+    const mx=lip.x*canvas.width;
+    const my=lip.y*canvas.height-d*0.15;
+    ctx.strokeStyle="#2a1a12";
+    ctx.lineWidth=d*0.18;
+    ctx.lineCap="round";
+    ctx.beginPath();
+    ctx.moveTo(mx,my);
+    ctx.bezierCurveTo(mx-d*0.3,my-d*0.2,mx-d,my+d*0.3,mx-d*1.1,my+d*0.4);
+    ctx.moveTo(mx,my);
+    ctx.bezierCurveTo(mx+d*0.3,my-d*0.2,mx+d,my+d*0.3,mx+d*1.1,my+d*0.4);
+    ctx.stroke();
+  }
+
+  if(filters.mole){
+    ctx.fillStyle="#3b2b1f";
+    ctx.beginPath();
+    ctx.arc(cheek.x*canvas.width+12,cheek.y*canvas.height,5,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  if(filters.hat){
+    ctx.fillStyle="#6b4a2b";
+    ctx.fillRect(cx-d*1.2,cy-d*1.25,d*2.4,d*0.35);
+    ctx.fillRect(cx-d*0.5,cy-d*1.9,d,d*0.65);
+  }
+}
+
+/* ========= SOBEL ========= */
+function applySobel(){
+  const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const d=img.data,w=img.width;
+  const gx=[-1,0,1,-2,0,2,-1,0,1];
+  const gy=[-1,-2,-1,0,0,0,1,2,1];
+  const out=new Uint8ClampedArray(d.length);
+
+  for(let i=0;i<d.length;i+=4){
+    let sx=0,sy=0;
+    for(let k=0;k<9;k++){
+      const p=i+((k%3)-1)*4+(Math.floor(k/3)-1)*w*4;
+      if(p<0||p>=d.length) continue;
+      const g=d[p]*0.3+d[p+1]*0.59+d[p+2]*0.11;
+      sx+=g*gx[k]; sy+=g*gy[k];
+    }
+    const m=Math.min(255,Math.sqrt(sx*sx+sy*sy));
+    out[i]=out[i+1]=out[i+2]=m; out[i+3]=255;
+  }
+  img.data.set(out);
+  ctx.putImageData(img,0,0);
+}
+
+/* ========= CAMARA ========= */
+const camera = new Camera(video,{
+  onFrame: async ()=>{
+    await faceMesh.send({ image: video });
+  }
+});
+
+navigator.mediaDevices.getUserMedia({video:true}).then(s=>{
+  video.srcObject = s;
+  camera.start();
+});
+</script>
+
+</body>
+</html>
